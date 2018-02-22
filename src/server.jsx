@@ -3,31 +3,69 @@ import React from 'react';
 import ReactDom from 'react-dom/server';
 import App from './components/App';
 
-const assetUrl = process.env.NODE_ENV !== 'production' ? 'http://localhost:8050' : '/';
+import cookieParser from 'cookie-parser';
+import acceptLanguage from 'accept-language';
+import { addLocaleData, IntlProvider } from 'react-intl';
 
-function renderHTML(componentHTML) {
+import fs from 'fs';
+import path from 'path';
+
+import en from 'react-intl/locale-data/en';
+import ru from 'react-intl/locale-data/ru';
+
+addLocaleData([...ru, ...en]);
+
+acceptLanguage.languages(['en', 'ru']);
+
+const messages = {};
+const localeData = {};
+
+['en', 'ru'].forEach((locale) => {
+  localeData[locale] = fs.readFileSync(path.join(__dirname, `../node_modules/react-intl/locale-data/${locale}.js`)).toString();
+  messages[locale] = require(`../public/assets/${locale}.json`);
+});
+
+const assetUrl = process.env.NODE_ENV !== 'production' ? 'http://localhost:8050' : '/';
+function renderHTML(componentHTML, locale, initialNow) {
   return `
-    <!DOCTYPE html>
-      <html>
-      <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Hello React</title>
-      </head>
-      <body>
-        <div id="react-view">${componentHTML}</div>
-        <script type="application/javascript" src="${assetUrl}/public/assets/bundle.js"></script>
-      </body>
-    </html>
-  `;
+  <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Hello React</title>
+    </head>
+    <body>
+      <div id="react-view">${componentHTML}</div>
+      <script type="application/javascript" src="${assetUrl}/public/assets/bundle.js"></script>
+      <script type="application/javascript">${localeData[locale]}</script>
+      <script type="application/javascript">window.INITIAL_NOW=${JSON.stringify(initialNow)}</script>
+    </body>
+  </html>`;
 }
 
 const app = express();
+const initialNow = Date.now();
+
+app.use(cookieParser());
+app.use('/public/assets', express.static('public/assets'));
+
+function detectLocale(req) {
+  const cookieLocale = req.cookies.locale;
+
+  return acceptLanguage.get(cookieLocale || req.headers['accept-language']) || 'en';
+}
 
 app.use((req, res) => {
-  const componentHTML = ReactDom.renderToString(<App />);
+  const locale = detectLocale(req);
+  const componentHTML = ReactDom.renderToString(
+    <IntlProvider initialNow={initialNow} locale={locale} messages={messages[locale]}>
+      <App />
+    </IntlProvider>
+  );
 
-  return res.end(renderHTML(componentHTML));
+  res.cookie('locale', locale, { maxAge: (new Date() * 0.001) + (365 * 24 * 3600) });
+  return res.end(renderHTML(componentHTML, locale, initialNow));
 });
 
 const PORT = process.env.PORT || 3001;
